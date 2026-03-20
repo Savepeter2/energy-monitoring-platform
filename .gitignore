@@ -156,6 +156,7 @@ cython_debug/
 #local
 test_schema.sql
 test_reading.csv
+FRAMEWORK.md
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
