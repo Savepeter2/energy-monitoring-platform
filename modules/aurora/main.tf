@@ -158,7 +158,7 @@ resource "aws_rds_cluster_instance" "writer" {
   engine_version      = aws_rds_cluster.aurora.engine_version
 
   performance_insights_enabled = true
-  monitoring_interval   = 0  # Enhanced Monitoring every 60 s
+  monitoring_interval   = 0  
 }
 
 # Read replica instance 
