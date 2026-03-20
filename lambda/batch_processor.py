@@ -460,6 +460,9 @@ def _batch_insert(conn, readings: list[dict]) -> int:
         return max(inserted, 0)
     
     except Exception as e:
+        conn.rollback()      
+        global _db_conn
+        _db_conn = None
         logger.error({
             "status": "error",
             "message": "Failed to insert readings into database",
