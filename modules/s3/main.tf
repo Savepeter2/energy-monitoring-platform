@@ -6,7 +6,7 @@
 # Both buckets enforce encryption at rest and block all public access.
 # =============================================================================
 
-# Variables 
+
 variable "project"         { type = string }
 variable "environment"     { type = string }
 variable "raw_ia_days"     { 
@@ -28,7 +28,7 @@ locals {
   processed_bucket_name = "${var.project}-${var.environment}-processed"
 }
 
-# Raw Bucket 
+
 resource "aws_s3_bucket" "raw" {
   bucket = local.raw_bucket_name
 
