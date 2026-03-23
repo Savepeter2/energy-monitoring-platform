@@ -1,7 +1,6 @@
 # =============================================================================
 # Module: Lambda
-# Two functions:
-#   1. batch_processor  – triggered by SQS; reads S3 raw files; batch-inserts
+# 1. batch_processor  – triggered by SQS; reads S3 raw files; batch-inserts
 # It runs inside the private VPC subnet and pull DB credentials from
 # Secrets Manager at cold-start (cached in memory for subsequent invocations).
 # =============================================================================
