@@ -1,4 +1,4 @@
-# Smarterise IoT Energy Monitoring Platform
+# Smarterise IoT Energy Monitoring Pipeline
 
 ## Introduction
 
