@@ -32,6 +32,8 @@ locals {
 resource "aws_s3_bucket" "raw" {
   bucket = local.raw_bucket_name
 
+  force_destroy = true  # allows bucket to be deleted even if it contains objects (use with caution in production!)
+
   # Prevent accidental deletion of production data
   lifecycle {
     prevent_destroy = false # will be set to true in prod
@@ -150,7 +152,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "processed" {
   }
 }
 
-# Outputs 
 output "raw_bucket_id"       { value = aws_s3_bucket.raw.id }
 output "raw_bucket_arn"      { value = aws_s3_bucket.raw.arn }
 output "processed_bucket_id" { value = aws_s3_bucket.processed.id }
