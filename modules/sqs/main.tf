@@ -11,7 +11,7 @@ variable "project"            { type = string }
 variable "environment"        { type = string }
 variable "visibility_timeout" { 
                                type = number
-                               default = 300 
+                               default = 600
                                }
 variable "max_receive_count"  { 
                                 type = number
