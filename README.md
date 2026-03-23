@@ -2,33 +2,11 @@
 
 ## Introduction
 
-Smarterise operates an IoT-based energy monitoring platform that collects high-frequency readings from smart meters deployed at transformer sites across Lagos. Meters transmit structured data payloads via FTP and MQTT every few minutes, containing three-phase voltage, current, power factor, frequency, and site identifiers. The platform is live and serves real clients, with its data feeding both a QuickSight analytics dashboard and a customer-facing web application via Aurora PostgreSQL.
+Smarterise operates an IoT-based energy monitoring platform that collects high-frequency readings from smart meters deployed at transformer sites across Lagos. Meters transmit structured data payloads via FTP, every few minutes, containing three-phase voltage, current, power factor, frequency, and site identifiers. The platform is live and serves real clients, with its data feeding both a QuickSight analytics dashboard and a customer-facing web application via Aurora PostgreSQL.
 
 This repository contains the complete infrastructure-as-code, Lambda processing logic, database schema, and operational documentation for the redesigned pipeline. The solution addresses the strain the existing architecture shows as the platform scales from its current footprint toward several hundred active sites - specifically around ingestion throughput, query performance under concurrent dashboard load, and data model rigidity caused by managing site-to-meter mappings in application code rather than the database.
 
-The redesigned pipeline introduces two parallel ingestion paths that converge at a single Aurora Serverless v2 writer: a file-based FTP path buffered through SQS, and a real-time MQTT path through AWS IoT Core and Kinesis Data Streams. Both paths share identical normalisation, deduplication, and bulk-insert logic implemented in Python Lambda functions, deployed inside a private VPC subnet with no public internet exposure.
-
----
-
-> ### ⚠️ Important Notice - Streaming Path (Kinesis / IoT Core) Not Deployed
->
-> The architecture designed and documented in this repository covers **two ingestion paths**: a batch path (FTP → S3 → SQS → Lambda) and a real-time streaming path (MQTT → IoT Core → Kinesis → Lambda).
->
-> **Only the batch path was fully deployed and tested end-to-end.**
->
-> The streaming path, specifically AWS IoT Core and Amazon Kinesis Data Streams was **not deployed** for the following reasons:
->
-> - **No AWS Free Tier coverage.** Neither AWS IoT Core nor Amazon Kinesis Data Streams are included in the AWS Free Tier. Provisioning and running these services, even at minimal scale, incurs immediate hourly and per-message costs that were not viable for this implementation exercise.
-> - **No IAM credentials were provided** for the AWS account that would be used to deploy these services, which made it impossible to provision them within the scope of this submission.
->
-> Despite these constraints, the following was still delivered for the streaming path:
->
-> - ✅ **Full Terraform module** (`modules/kinesis/main.tf`) - defines the Kinesis Data Stream, shard-level CloudWatch metrics, KMS encryption, and iterator age alarm. The module is complete and production-ready.
-> - ✅ **Full IAM role and policy** for the stream Lambda - scoped to the specific Kinesis stream ARN with least-privilege permissions.
-> - ✅ **`stream_processor.py`** - the complete Kinesis-triggered Lambda handler, including base64 decoding, JSON parsing, timestamp normalisation, deduplication, and bulk Aurora insert with per-record failure reporting.
-> - ✅ **Terraform wiring** in `main.tf` - the `module "kinesis"` and `module "lambda"` blocks that connect IoT Core → Kinesis → Lambda are present but **commented out**, clearly marked so they can be enabled with a single `terraform apply` once the appropriate AWS account and credentials are available.
->
-> The batch path was implemented and tested in full, and some personal AWS costs were incurred to do so (Aurora Serverless v2, NAT Gateway, VPC Interface Endpoints).
+The redesigned pipeline introduces an ingestion path that writes a Aurora Serverless v2 writer: a file-based FTP path buffered through SQS. The path undergoes  normalisation, deduplication, and bulk-insert logic implemented in Python Lambda functions, deployed inside a private VPC subnet with no public internet exposure.
 
 ---
 
@@ -96,13 +74,11 @@ smarterise-terraform/
 │   ├── vpc/main.tf                  # VPC, subnets, NAT gateways, VPC endpoints
 │   ├── s3/main.tf                   # Raw and processed S3 buckets
 │   ├── sqs/main.tf                  # Main queue + dead-letter queue
-│   ├── kinesis/main.tf              # Kinesis Data Stream
 │   ├── iam/main.tf                  # IAM roles and least-privilege policies
 │   ├── aurora/main.tf               # Aurora Serverless v2 cluster + instances
 │   └── lambda/main.tf               # Both Lambda functions + event source mappings
 ├── lambda/
 │   ├── batch_processor.py           # SQS-triggered Lambda (FTP path)
-│   └── stream_processor.py          # Kinesis-triggered Lambda (MQTT path)
 └── sql/
     └── schema.sql                   # Database DDL - tables, indexes, views, pg_cron jobs
 ```
@@ -132,7 +108,6 @@ pip install \
 
 # copy the handler files into the build directory
 cp lambda/batch_processor.py  ./lambda_build/
-cp lambda/stream_processor.py ./lambda_build/
 
 # zip everything - the zip must be flat (handlers at root level)
 cd lambda_build
@@ -147,7 +122,6 @@ Expected output of the last command:
 
 ```
     ...  batch_processor.py
-    ...  stream_processor.py
 ```
 
 If the paths show a subdirectory prefix (e.g. `lambda_build/batch_processor.py`), Lambda will fail with a handler not found error. Re-zip from inside the `lambda_build/` directory as shown above.
@@ -194,7 +168,6 @@ lambda_zip_path     = "../../lambda_package.zip"  # path built in step 1.3
 Key decisions:
 
 - **`aws_region`** - must match the region your AWS CLI is configured for. All resources land in this region.
-- **`kinesis_shard_count`** - set to `1` for dev. Each shard handles 1 MB/s write throughput. Scale this up as active sites grow; one `terraform apply` is all that is needed.
 - **`lambda_zip_path`** - must point to the zip built in step 1.3. The path is relative to the root module directory (`smarterise-solution/`).
 
 ---
@@ -225,7 +198,6 @@ When the apply completes, Terraform prints the outputs defined in `main.tf`:
 Outputs:
 
 aurora_cluster_endpoint      = <sensitive>
-kinesis_stream_name          = "smarterise-dev-meter-events"
 lambda_batch_function_name   = "smarterise-dev-batch"
 lambda_stream_function_name  = "smarterise-dev-stream"
 raw_bucket_name              = "smarterise-dev-raw"
@@ -384,7 +356,6 @@ pip install psycopg2-binary boto3 \
   --only-binary=:all: \
   --upgrade
 cp lambda/batch_processor.py  ./lambda_build/
-cp lambda/stream_processor.py ./lambda_build/
 cd lambda_build && zip -r ../lambda_package.zip . && cd ..
 
 # deploy only the Lambda module - no other resources are touched
@@ -455,7 +426,7 @@ Then re-run `terraform destroy`.
 
 ## 2. Solution Overview
 
-The pipeline was designed around two ingest paths that converge at a single Aurora PostgreSQL writer. **Only the FTP / batch path was deployed and tested in full.** The MQTT / streaming path was fully designed and its Terraform modules and Lambda handler were written, but was not provisioned - see the notice in the README for the reasons. The section below documents both paths for completeness, clearly marking what is live.
+The pipeline was designed around two ingest paths that converge at a single Aurora PostgreSQL writer. **Only the FTP / batch path was deployed and tested in full.** 
 
 ---
 
@@ -469,25 +440,12 @@ The pipeline was designed around two ingest paths that converge at a single Auro
 
 ---
 
-### 2.2 MQTT / Streaming Path ⚠️ Designed, Not Deployed
-
-> This path was not provisioned due to the cost constraints described earlier. The Terraform module (`modules/kinesis/`), IAM role, and `stream_processor.py` The design is documented here so the full intended architecture is understood.
-
-1. Meters publish JSON payloads via MQTT to **AWS IoT Core**, which applies routing rules and forwards messages to a **Kinesis Data Stream**.
-2. The **stream Lambda** function consumes from Kinesis with `TRIM_HORIZON` starting position, ensuring no records are missed on initial deploy. Each invocation processes a shard batch of up to 100 records.
-3. The same normalisation, deduplication, and bulk-insert pattern as the batch path is applied - both Lambda handlers share identical database logic.
-4. `bisect_batch_on_function_error = true` means Lambda automatically splits a failing batch in half to isolate any single malformed record without blocking the entire shard indefinitely.
-
-To enable this path against a supported AWS account, uncomment the `module "kinesis"` and streaming-related blocks in `main.tf` and run `terraform apply`.
-
----
-
 ### 2.3 Storage and Serving
 
 - **Aurora Serverless v2** hosts the `meter_readings` table, partitioned by month via `pg_cron`-scheduled stored procedures. A separate **read replica** handles all dashboard and web app queries, protecting the writer from read load.
-- **ElastiCache (Redis)** is provisioned to cache frequently repeated dashboard query results (e.g. hourly aggregates) with a short TTL, further reducing Aurora read replica pressure.
-- **QuickSight** connects to the Aurora reader endpoint via a private VPC connection and queries the `hourly_site_aggregates` materialised view for trend charts.
-- The **customer-facing web app** (ECS Fargate) queries via the reader endpoint or through the Redis cache, keeping dashboard latency independent of ingestion write load.
+- **ElastiCache (Redis)** can be provisioned to cache frequently repeated dashboard query results (e.g. hourly aggregates) with a short TTL, which reduces Aurora read replica pressure.
+- **QuickSight** can connect to the Aurora reader endpoint via a private VPC connection and queries the `hourly_site_aggregates` materialised view for trend charts.
+- The **customer-facing web app** (ECS Fargate) can query via the reader endpoint or through the Redis cache, which keeps dashboard latency independent of ingestion write load.
 
 ---
 
@@ -503,8 +461,6 @@ To enable this path against a supported AWS account, uncomment the `module "kine
 | **Secrets Manager** | Credential management | Auto-rotation; fine-grained IAM access; eliminates hardcoded credentials | ✅ Deployed |
 | **VPC + Private Subnets** | Network isolation | Lambda and Aurora have no internet route; attack surface is minimal | ✅ Deployed |
 | **CloudWatch** | Observability | Native metrics for all services; custom alarms; log retention management | ✅ Deployed |
-| **Kinesis Data Stream** | MQTT streaming path | Ordered, sharded delivery; replay window for recovery; scales by adding shards | ⚠️ Designed only |
-| **AWS IoT Core** | MQTT broker | Managed broker at scale; handles TLS, auth, and rule-based routing without custom broker infrastructure | ⚠️ Designed only |
 | **ElastiCache (Redis)** | Query caching | Sub-millisecond reads; reduces Aurora load for repeated dashboard queries | ⚠️ Designed only |
 | **ECS Fargate** | Web app hosting | Serverless containers; no EC2 fleet to manage; scales independently of the pipeline | ⚠️ Designed only |
 
@@ -538,7 +494,7 @@ The `meter_readings` table carries a composite primary key on `(device_id, readi
 
 **Step 3 - SQS message visibility and acknowledgement**
 
-SQS does not delete a message until Lambda explicitly acknowledges it by not returning its ID in `batchItemFailures`. If Lambda crashes mid-insert, the message becomes visible again after the visibility timeout (300 seconds, matching the Lambda timeout) and is re-delivered. The idempotent INSERT handles any overlap between the partial first attempt and the full retry - rows already committed are skipped, rows not yet committed are inserted.
+SQS does not delete a message until Lambda explicitly acknowledges it by not returning its ID in `batchItemFailures`. If Lambda crashes mid-insert, the message becomes visible again after the visibility timeout (600 seconds), which is twice the lambda timeout and is re-delivered. The idempotent INSERT handles any overlap between the partial first attempt and the full retry - rows already committed are skipped, rows not yet committed are inserted.
 
 ---
 
@@ -578,7 +534,6 @@ The NAT Gateway exists only to allow Lambda to reach AWS API endpoints that do n
 Each Lambda function has its own dedicated IAM role. Permissions are scoped to specific resource ARNs - no role uses a wildcard `*` resource except for the EC2 VPC networking actions (`ec2:CreateNetworkInterface`, `ec2:DescribeNetworkInterfaces`, `ec2:DeleteNetworkInterface`), which the AWS service itself requires to be `*` by design.
 
 - **Batch Lambda role** - read only the `raw/` prefix in the raw S3 bucket; write only to the processed S3 bucket; consume and delete messages from the specific SQS queue ARN; send to the DLQ ARN; read the specific Secrets Manager secret ARN.
-- **Stream Lambda role** (designed) - read only the specific Kinesis stream ARN; read the specific Secrets Manager secret ARN. No S3 or SQS permissions.
 
 Neither role can access resources belonging to the other, and neither can perform administrative actions on any AWS service.
 
