@@ -159,7 +159,7 @@ test_reading.csv
 FRAMEWORK.md
 cleanup.sh
 run_local.py
-stream_processor.py
+stream_processors.py
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
