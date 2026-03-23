@@ -61,7 +61,6 @@ resource "aws_rds_cluster_parameter_group" "aurora" {
   name   = "${var.project}-${var.environment}-aurora-params"
   family = "aurora-postgresql15"
 
-  # Enable pg_partman-compatible settings for partition pruning
   parameter {
     name  = "enable_partition_pruning"
     value = "on"
@@ -85,14 +84,12 @@ resource "aws_rds_cluster_parameter_group" "aurora" {
 }
 }
 
-# Random password for the master user 
 resource "random_password" "db_master" {
   length           = 32
   special          = true
   override_special = "!#$%&*()-_=+[]{}:?"
 }
 
-# ── Secrets Manager: store credentials (auto-rotation configured separately) ──
 resource "aws_secretsmanager_secret" "db_credentials" {
   name                    = "${var.project}/${var.environment}/aurora/master"
   recovery_window_in_days = 0  # allow immediate deletion during development; set to 7+ in prod
@@ -175,7 +172,6 @@ resource "aws_rds_cluster_instance" "reader" {
   monitoring_interval          = 0 
 }
 
-# Outputs 
 output "cluster_endpoint"        { 
                                    value = aws_rds_cluster.aurora.endpoint
                                    sensitive = true 
