@@ -1,8 +1,8 @@
-# Smarterise IoT Energy Monitoring Pipeline
+# IoT Energy Monitoring Platform
 
 ## Introduction
 
-Smarterise operates an IoT-based energy monitoring platform that collects high-frequency readings from smart meters deployed at transformer sites across Lagos. Meters transmit structured data payloads via FTP, every few minutes, containing three-phase voltage, current, power factor, frequency, and site identifiers. The platform is live and serves real clients, with its data feeding both a QuickSight analytics dashboard and a customer-facing web application via Aurora PostgreSQL.
+An IoT-based energy monitoring platform that collects high-frequency readings from smart meters deployed at transformer sites across Lagos. Meters transmit structured data payloads via FTP and MQTT every few minutes, containing three-phase voltage, current, power factor, frequency, and site identifiers. The platform is live and serves real clients, with its data feeding both a QuickSight analytics dashboard and a customer-facing web application via Aurora PostgreSQL.
 
 This repository contains the complete infrastructure-as-code, Lambda processing logic, database schema, and operational documentation for the redesigned pipeline. The solution addresses the strain the existing architecture shows as the platform scales from its current footprint toward several hundred active sites - specifically around ingestion throughput, query performance under concurrent dashboard load, and data model rigidity caused by managing site-to-meter mappings in application code rather than the database.
 
@@ -443,9 +443,9 @@ The pipeline was designed around two ingest paths that converge at a single Auro
 ### 2.3 Storage and Serving
 
 - **Aurora Serverless v2** hosts the `meter_readings` table, partitioned by month via `pg_cron`-scheduled stored procedures. A separate **read replica** handles all dashboard and web app queries, protecting the writer from read load.
-- **ElastiCache (Redis)** can be provisioned to cache frequently repeated dashboard query results (e.g. hourly aggregates) with a short TTL, which reduces Aurora read replica pressure.
-- **QuickSight** can connect to the Aurora reader endpoint via a private VPC connection and queries the `hourly_site_aggregates` materialised view for trend charts.
-- The **customer-facing web app** (ECS Fargate) can query via the reader endpoint or through the Redis cache, which keeps dashboard latency independent of ingestion write load.
+- **QuickSight** connects to the Aurora reader endpoint via a private VPC connection and queries the `hourly_site_aggregates` materialised view for trend charts.
+- **ElastiCache (Redis)** is provisioned to cache frequently repeated dashboard query results (e.g. hourly aggregates) with a short TTL, which further reduces Aurora read replica pressure.
+- The **customer-facing web app** (ECS Fargate) queries via the reader endpoint or through the Redis cache, keeping dashboard latency independent of ingestion write load.
 
 ---
 
@@ -453,7 +453,7 @@ The pipeline was designed around two ingest paths that converge at a single Auro
 
 | Service | Role | Why this service | Status |
 |---|---|---|---|
-| **AWS Transfer Family** | SFTP endpoint for meter file drops | Fully managed; no EC2 to patch; native IAM integration; writes directly to S3 | ✅ Deployed |
+| **AWS Transfer Family** | SFTP endpoint for meter file drops | Fully managed; no EC2 to patch; native IAM integration; writes directly to S3 | ⚠️ Designed only |
 | **S3** | Raw + processed storage | Infinitely scalable; per-object encryption; lifecycle policies for automatic cost tiering | ✅ Deployed |
 | **SQS** | Buffer between S3 events and Lambda | Decouples ingestion bursts from processing; provides durable retry with DLQ; no data loss on Lambda throttle | ✅ Deployed |
 | **Lambda** | Transform compute | No servers to manage; scales to concurrency automatically; reserved concurrency caps DB connection count | ✅ Deployed |
