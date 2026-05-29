@@ -100,7 +100,7 @@ resource "aws_route_table_association" "private" {
 }
 
 # VPC Endpoints 
-# These allow Lambda to reach S3, Kinesis, SQS, and Secrets Manager without
+# These allow Lambda to reach S3, SQS, and Secrets Manager without
 # traversing NAT – reduces latency and eliminates data processing charges.
 
 data "aws_region" "current" {}
@@ -133,8 +133,6 @@ resource "aws_vpc_endpoint" "kinesis" {
 }
 
 # Security group for interface VPC endpoints
-
-
 resource "aws_security_group" "vpc_endpoints" {
   name        = "${var.project}-${var.environment}-vpc-endpoints"
   description = "Allow HTTPS from within the VPC to reach interface endpoints"
@@ -156,7 +154,7 @@ resource "aws_security_group" "vpc_endpoints" {
   }
 }
 
-# Outputs 
+
 output "vpc_id"             { value = aws_vpc.main.id }
 output "private_subnet_ids" { value = aws_subnet.private[*].id }
 output "public_subnet_ids"  { value = aws_subnet.public[*].id }

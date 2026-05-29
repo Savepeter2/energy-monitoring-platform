@@ -1,7 +1,6 @@
--- =============================================================================
 -- Smarterise IoT Platform – Aurora PostgreSQL Schema
 -- This DDL is ran once after the Aurora cluster is provisioned.
--- =============================================================================
+
 
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -24,12 +23,11 @@ CREATE TABLE IF NOT EXISTS site_meter_map (
 CREATE INDEX IF NOT EXISTS idx_site_meter_site_id
     ON site_meter_map (site_id);
 
--- =============================================================================
+
 -- Core fact table: meter_readings
 -- Partitioned by month (RANGE on reading_ts).
 -- Partitions are created automatically by create_monthly_partitions() below,
 -- scheduled via pg_cron – no manual partition management ever needed.
--- =============================================================================
 CREATE TABLE IF NOT EXISTS meter_readings (
     id              BIGSERIAL,
     device_id       TEXT        NOT NULL,
@@ -52,7 +50,7 @@ CREATE TABLE IF NOT EXISTS meter_readings (
 
 ) PARTITION BY RANGE (reading_ts);
 
--- =============================================================================
+
 -- Auto-partition procedure
 -- Creates monthly partitions for a window of:
 --   p_months_back  months in the past  (backfill / catch-up)
@@ -60,7 +58,7 @@ CREATE TABLE IF NOT EXISTS meter_readings (
 --
 -- Safe to call repeatedly – IF NOT EXISTS means already-existing partitions
 -- are silently skipped, so the pg_cron job can run daily without errors.
--- =============================================================================
+
 CREATE OR REPLACE PROCEDURE create_monthly_partitions(
     p_months_back  INT DEFAULT 2,
     p_months_ahead INT DEFAULT 3
@@ -97,23 +95,21 @@ BEGIN
 END;
 $$;
 
--- =============================================================================
+
 -- Bootstrap: run the procedure immediately on first deploy.
 -- Creates partitions from 2 months ago through 3 months ahead so the
 -- table is ready to accept data straight away.
--- =============================================================================
 CALL create_monthly_partitions(
     p_months_back  => 2,
     p_months_ahead => 3
 );
 
--- =============================================================================
+
 -- Schedule: run daily at 00:05 UTC via pg_cron.
 -- Pre-creates the next 3 months of partitions so a partition always exists
 -- before data for that month starts arriving.
 -- The job is idempotent – re-running this script won't create duplicate jobs
 -- because we delete any existing job with the same name first.
--- =============================================================================
 SELECT cron.unschedule(jobid)
 FROM   cron.job
 WHERE  jobname = 'smarterise-batch-monthly-partitions';
@@ -124,7 +120,7 @@ SELECT cron.schedule(
     $$CALL create_monthly_partitions(p_months_back => 2, p_months_ahead => 3)$$
 );
 
--- ── Indexes ───────────────────────────────────────────────────────────────────
+
 CREATE INDEX IF NOT EXISTS idx_readings_site_ts
     ON meter_readings (site_id, reading_ts DESC);
 
@@ -135,9 +131,8 @@ CREATE INDEX IF NOT EXISTS idx_readings_ingested_recent
     ON meter_readings (ingested_at DESC)
     WHERE ingested_at > now() - INTERVAL '24 hours';
 
--- =============================================================================
+
 -- Materialised view: hourly_site_aggregates
--- =============================================================================
 CREATE MATERIALIZED VIEW IF NOT EXISTS hourly_site_aggregates AS
 SELECT
     site_id,
@@ -158,9 +153,8 @@ WITH DATA;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hourly_agg_site_hour
     ON hourly_site_aggregates (site_id, hour_ts);
 
--- =============================================================================
+
 -- View: latest_readings_per_device
--- =============================================================================
 CREATE OR REPLACE VIEW latest_readings_per_device AS
 SELECT DISTINCT ON (device_id)
     device_id,
@@ -174,11 +168,11 @@ SELECT DISTINCT ON (device_id)
 FROM meter_readings
 ORDER BY device_id, reading_ts DESC;
 
--- =============================================================================
+
 -- Partition maintenance: drop partitions older than 24 months
 -- Runs on the 1st of every month at 01:00 UTC.
 -- Adjust p_retention_months to match your data retention policy.
--- =============================================================================
+
 CREATE OR REPLACE PROCEDURE drop_old_partitions(
     p_retention_months INT DEFAULT 24
 )
@@ -214,9 +208,7 @@ SELECT cron.schedule(
     $$CALL drop_old_partitions(p_retention_months => 24)$$
 );
 
--- =============================================================================
--- Comments
--- =============================================================================
+
 COMMENT ON TABLE  meter_readings               IS 'Raw per-reading measurements from smart meters';
 COMMENT ON TABLE  site_meter_map               IS 'Maps device_id to site; replaces app-code mapping';
 COMMENT ON COLUMN meter_readings.reading_ts    IS 'Always UTC, normalised by Lambda before insert';

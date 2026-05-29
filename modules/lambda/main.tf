@@ -1,9 +1,7 @@
 # =============================================================================
 # Module: Lambda
-# Two functions:
-#   1. batch_processor  – triggered by SQS; reads S3 raw files; batch-inserts
-#   2. stream_processor – triggered by Kinesis; processes MQTT events
-# Both run inside the private VPC subnet and pull DB credentials from
+# 1. batch_processor  – triggered by SQS; reads S3 raw files; batch-inserts
+# It runs inside the private VPC subnet and pull DB credentials from
 # Secrets Manager at cold-start (cached in memory for subsequent invocations).
 # =============================================================================
 
@@ -17,9 +15,7 @@ variable "private_subnet_ids"       { type = list(string) }
 # both aurora module (as allowed_sg_ids) and lambda module (as lambda_sg_id).
 variable "lambda_sg_id"             { type = string }
 variable "batch_role_arn"           { type = string }
-# variable "stream_role_arn"          { type = string }
 variable "sqs_queue_arn"            { type = string }
-# variable "kinesis_stream_arn"       { type = string }
 variable "processed_bucket"         { type = string }
 variable "aurora_secret_arn"        { type = string }
 variable "aurora_cluster_endpoint"  { type = string }
@@ -57,9 +53,8 @@ resource "aws_cloudwatch_log_group" "stream" {
   retention_in_days = 30
 }
 
-# =============================================================================
-# 1. Batch Processor Lambda (SQS trigger)
-# =============================================================================
+
+#Batch Processor Lambda (SQS trigger)
 resource "aws_lambda_function" "batch_processor" {
   function_name = "${var.project}-${var.environment}-batch"
   description   = "Reads raw S3 meter files, validates, deduplicates, and batch-inserts to Aurora"
@@ -100,54 +95,6 @@ resource "aws_lambda_event_source_mapping" "sqs_to_batch" {
   # On partial batch failure: only retry failed records, not the whole batch
   function_response_types = ["ReportBatchItemFailures"]
 }
-
-# =============================================================================
-# 2. Stream Processor Lambda (Kinesis trigger)
-# =============================================================================
-# resource "aws_lambda_function" "stream_processor" {
-#   function_name = "${var.project}-${var.environment}-stream"
-#   description   = "Consumes Kinesis meter events, deduplicates, and batch-inserts to Aurora"
-#   runtime       = "python3.12"
-#   handler       = "stream_processor.handler"
-#   role          = var.stream_role_arn
-#   filename      = var.lambda_zip_path
-#   timeout       = 180
-#   memory_size   = 256
-
-#   vpc_config {
-#     subnet_ids         = var.private_subnet_ids
-#     security_group_ids = [var.lambda_sg_id]
-#   }
-
-#   environment {
-#     variables = local.common_env
-#   }
-
-#   reserved_concurrent_executions = 20  # one per Kinesis shard * safety factor
-
-#   depends_on = [aws_cloudwatch_log_group.stream]
-# }
-
-# # Wire Kinesis stream → Lambda
-# resource "aws_lambda_event_source_mapping" "kinesis_to_stream" {
-#   count            = var.kinesis_stream_arn != "" ? 1 : 0  # only create if ARN is provided
-#   event_source_arn  = var.kinesis_stream_arn
-#   function_name     = aws_lambda_function.stream_processor.arn
-#   starting_position = var.starting_position
-#   batch_size        = 100
-
-#   # Bisect-on-error: splits a failing batch in half to isolate bad records
-#   # rather than retrying the full batch indefinitely
-#   bisect_batch_on_function_error = true
-
-#   # Destination for records that fail after all retries
-#   destination_config {
-#     on_failure {
-#       destination_arn = var.sqs_queue_arn  # re-use the DLQ concept via SQS
-#     }
-#   }
-# }
-
 # CloudWatch Alarms 
 # Alert if either Lambda has errors in the last 5 minutes
 resource "aws_cloudwatch_metric_alarm" "batch_errors" {
@@ -163,20 +110,4 @@ resource "aws_cloudwatch_metric_alarm" "batch_errors" {
   dimensions = { FunctionName = aws_lambda_function.batch_processor.function_name }
 }
 
-# resource "aws_cloudwatch_metric_alarm" "stream_errors" {
-#   alarm_name          = "${var.project}-${var.environment}-stream-errors"
-#   comparison_operator = "GreaterThanThreshold"
-#   evaluation_periods  = 1
-#   metric_name         = "Errors"
-#   namespace           = "AWS/Lambda"
-#   period              = 300
-#   statistic           = "Sum"
-#   threshold           = 5
-#   alarm_description   = "Stream Lambda has >5 errors in 5 min"
-#   dimensions = { FunctionName = aws_lambda_function.stream_processor.function_name }
-# }
-
-# Outputs 
 output "batch_function_name"  { value = aws_lambda_function.batch_processor.function_name }
-# output "stream_function_name" { value = aws_lambda_function.stream_processor.function_name }
-# lambda_sg_id is no longer output from here — it lives in root and is passed IN
