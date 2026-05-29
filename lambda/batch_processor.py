@@ -536,14 +536,12 @@ def handler(event: dict, context: Any) -> dict:
         })
         return {"batchItemFailures": batch_item_failures}
 
-    # Step 2: Deduplicate across the entire batch
     deduped = _deduplicate(all_readings)
     logger.info({
         "status": "error",
         "message": f"Batched: {len(all_readings)} raw readings -> {len(deduped)} after dedup"
     })
 
-    # Step 3: Bulk-insert into Aurora 
     try:
         conn = _get_db_connection()
         _batch_insert(conn, deduped)
